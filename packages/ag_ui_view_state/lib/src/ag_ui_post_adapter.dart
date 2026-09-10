@@ -5,6 +5,7 @@ import 'package:ag_ui/ag_ui.dart';
 import 'package:http/http.dart' as http;
 
 import 'controller.dart';
+import 'sse_request_session.dart';
 import 'transport.dart';
 import 'view_state.dart';
 
@@ -37,9 +38,7 @@ final class AgUiPostAdapter {
   final ViewLimits limits;
   final http.Client Function() _parserClientFactory;
 
-  RequestOperation? _operation;
-  StreamSubscription<BaseEvent>? _subscription;
-  Completer<void>? _streamDone;
+  SseRequestSession? _session;
   bool _busy = false;
   bool _disposed = false;
 
@@ -60,16 +59,13 @@ final class AgUiPostAdapter {
 
     _busy = true;
     final generation = controller.beginRequest();
-    RequestOperation? operation;
-    StreamSubscription<BaseEvent>? subscription;
-    http.Client? parserHttpClient;
-    SseClient? sseClient;
+    SseRequestSession? session;
     final done = Completer<void>();
-    _streamDone = done;
     var terminal = false;
     try {
-      operation = transport.open(
-        RequestSpec(
+      session = SseRequestSession.open(
+        transport: transport,
+        request: RequestSpec(
           method: 'POST',
           uri: endpoint,
           headers: {
@@ -79,12 +75,11 @@ final class AgUiPostAdapter {
           },
           body: encoded,
         ),
+        limits: limits,
+        parserClientFactory: _parserClientFactory,
       );
-      _operation = operation;
-      final response = await Future.any<TransportResponse?>([
-        _responseBeforeDeadline(operation),
-        done.future.then<TransportResponse?>((_) => null),
-      ]);
+      _session = session;
+      final response = await session.responseBefore(responseHeaderTimeout);
       if (response == null) return;
       if (!controller.isCurrent(generation)) return;
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -112,20 +107,9 @@ final class AgUiPostAdapter {
         ConnectionPhase.connected,
         generation: generation,
       );
-      parserHttpClient = _parserClientFactory();
-      sseClient = SseClient(
-        httpClient: parserHttpClient,
-        maxDataCodeUnits: limits.maxSseDataCodeUnits,
-        maxLineCodeUnits: limits.maxSseLineCodeUnits,
-      );
-      final events =
-          EventStreamAdapter(maxDataCodeUnits: limits.maxSseDataCodeUnits)
-              .fromSseStream(
-                sseClient.parseStream(response.body, headers: response.headers),
-                skipInvalidEvents: false,
-              );
-      subscription = events.listen(
-        (event) {
+      session.listen(
+        response,
+        onData: (event) {
           if (!controller.isCurrent(generation) || terminal) return;
           try {
             onProtocolEvent?.call(event);
@@ -134,7 +118,7 @@ final class AgUiPostAdapter {
               ViewFailureKind.hostCallbackFailed,
               generation: generation,
             );
-            unawaited(operation!.abort());
+            unawaited(session!.close());
             if (!done.isCompleted) done.complete();
             return;
           }
@@ -144,7 +128,7 @@ final class AgUiPostAdapter {
             if (!done.isCompleted) done.complete();
           }
         },
-        onError: (Object _) {
+        onError: (_) {
           if (controller.isCurrent(generation)) {
             controller.fail(
               ViewFailureKind.protocolViolation,
@@ -156,10 +140,8 @@ final class AgUiPostAdapter {
         onDone: () {
           if (!done.isCompleted) done.complete();
         },
-        cancelOnError: true,
       );
-      _subscription = subscription;
-      await done.future;
+      await Future.any<void>([done.future, session.cancelled]);
       if (controller.isCurrent(generation) &&
           !terminal &&
           controller.state.failure == null) {
@@ -188,25 +170,9 @@ final class AgUiPostAdapter {
         );
       }
     } finally {
-      await subscription?.cancel();
-      if (identical(_subscription, subscription)) _subscription = null;
-      if (identical(_streamDone, done)) _streamDone = null;
-      await sseClient?.close();
-      parserHttpClient?.close();
-      await operation?.abort();
-      if (identical(_operation, operation)) _operation = null;
+      await session?.close();
+      if (identical(_session, session)) _session = null;
       _busy = false;
-    }
-  }
-
-  Future<TransportResponse> _responseBeforeDeadline(
-    RequestOperation operation,
-  ) async {
-    try {
-      return await operation.response.timeout(responseHeaderTimeout);
-    } on TimeoutException {
-      await operation.abort();
-      rethrow;
     }
   }
 
@@ -220,12 +186,7 @@ final class AgUiPostAdapter {
   };
 
   Future<void> disconnect() async {
-    final done = _streamDone;
-    if (done != null && !done.isCompleted) done.complete();
-    final subscription = _subscription;
-    final operation = _operation;
-    await subscription?.cancel();
-    await operation?.abort();
+    await _session?.close();
   }
 
   Future<void> dispose() async {

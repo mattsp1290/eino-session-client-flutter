@@ -74,8 +74,6 @@ final class ViewFailure {
 
 final class ViewLimits {
   ViewLimits({
-    this.maxPendingEvents = 256,
-    this.maxPendingBytes = 1024 * 1024,
     this.maxMessages = 100,
     this.maxTools = 200,
     this.maxDisplayBytes = 256 * 1024,
@@ -85,9 +83,7 @@ final class ViewLimits {
     this.maxSubmissionBytes = 64 * 1024,
     this.maxEncodedInputBytes = 2 * 1024 * 1024,
   }) {
-    if (maxPendingEvents <= 0 ||
-        maxPendingBytes <= 0 ||
-        maxMessages <= 0 ||
+    if (maxMessages <= 0 ||
         maxTools <= 0 ||
         maxDisplayBytes <= 0 ||
         maxMessageBytes <= 0 ||
@@ -99,8 +95,6 @@ final class ViewLimits {
     }
   }
 
-  final int maxPendingEvents;
-  final int maxPendingBytes;
   final int maxMessages;
   final int maxTools;
   final int maxDisplayBytes;
