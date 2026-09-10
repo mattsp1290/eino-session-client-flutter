@@ -13,7 +13,10 @@ dependencies:
       ref: 691ab5e3846ad5957d1b04a9237167f5496c6232
       path: sdks/community/dart
   ag_ui_view_state:
-    path: ../ag_ui_view_state
+    git:
+      url: https://github.com/mattsp1290/eino-session-client-flutter.git
+      ref: d51e3a404537b6a2dde09eab9bb792ac3f022e84
+      path: packages/ag_ui_view_state
   http: 1.6.0
 
 dev_dependencies:

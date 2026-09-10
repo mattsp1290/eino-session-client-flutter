@@ -13,9 +13,11 @@ packages:
   ag_ui_view_state:
     dependency: "direct main"
     description:
-      path: "../ag_ui_view_state"
-      relative: true
-    source: path
+      path: "packages/ag_ui_view_state"
+      ref: d51e3a404537b6a2dde09eab9bb792ac3f022e84
+      resolved-ref: d51e3a404537b6a2dde09eab9bb792ac3f022e84
+      url: "https://github.com/mattsp1290/eino-session-client-flutter.git"
+    source: git
     version: "0.1.0"
   async:
     dependency: transitive
