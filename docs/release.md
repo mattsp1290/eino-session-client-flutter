@@ -62,7 +62,9 @@ Chrome integration suites also passed against the runtime-backed Go fixture
 server. They prove server-validated two-turn generic history and Eino
 completion, paused live replacement, reconnect, and interruption.
 
-The Linux CI job uses Go 1.26.8 and runs the same gate including Chrome. Record
-the first passing GitHub Actions run here after the distribution commit is
-pushed. If core changes after A, select another A and repeat the dependent and
-consumer gates.
+GitHub Actions run
+[`34444790932`](https://github.com/mattsp1290/eino-session-client-flutter/actions/runs/34444790932)
+passed on 2026-09-10. Its Ubuntu 24.04 job used Go 1.26.8 and ran the full gate,
+including both Chrome integration suites and fresh public resolution. Its
+macOS 15 job passed all package analysis and tests. If core changes after A,
+select another A and repeat the dependent and consumer gates.
