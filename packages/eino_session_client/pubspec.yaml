@@ -1,0 +1,24 @@
+name: eino_session_client
+description: Optional bounded Eino server-owned session observation adapter.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: '>=3.13.1 <4.0.0'
+
+dependencies:
+  ag_ui:
+    git:
+      url: https://github.com/mattsp1290/ag-ui.git
+      ref: 691ab5e3846ad5957d1b04a9237167f5496c6232
+      path: sdks/community/dart
+  ag_ui_view_state:
+    git:
+      url: https://github.com/mattsp1290/eino-session-client-flutter.git
+      ref: ae5e3c3eed5058bd900eaab706ef4e960a25ba16
+      path: packages/ag_ui_view_state
+  http: 1.6.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.26.0

@@ -1,0 +1,6 @@
+id: MESSAGES_SNAPSHOT_1700000000000
+data: {"type":"MESSAGES_SNAPSHOT","timestamp":1700000000000,"messages":[{"id":"user-1","role":"user","content":"safe synthetic request"},{"id":"assistant-1","role":"assistant","content":"durable baseline"}]}
+
+id: STATE_SNAPSHOT_1700000000000
+data: {"type":"STATE_SNAPSHOT","timestamp":1700000000000,"snapshot":{"Watermark":{"StoreID":"store-fixture","SessionID":"session-fixture","Revision":3},"Exists":true,"OmittedOlderMessages":false,"Runs":[{"ID":"run-1","Status":"completed","ProviderID":"fixture","ModelID":"scripted","LeaseUntil":"0001-01-01T00:00:00Z"}],"Tools":[{"ID":"tool-1","RunID":"run-1","MessageID":"assistant-1","Name":"lookup","Status":"completed"},{"ID":"tool-2","RunID":"run-1","MessageID":"assistant-1","Name":"lookup","Status":"interrupted"}],"Live":[]}}
+

@@ -1,0 +1,45 @@
+id: RUN_STARTED_1700000000000
+data: {"type":"RUN_STARTED","timestamp":1700000000000,"threadId":"thread-generic","runId":"run-generic"}
+
+id: MESSAGES_SNAPSHOT_1700000000000
+data: {"type":"MESSAGES_SNAPSHOT","timestamp":1700000000000,"messages":[{"id":"user-1","role":"user","content":"safe synthetic café request"},{"id":"assistant-1","role":"assistant","content":"baseline"}]}
+
+id: TEXT_MESSAGE_START_1700000000000
+data: {"type":"TEXT_MESSAGE_START","timestamp":1700000000000,"messageId":"assistant-1","role":"assistant"}
+
+id: TEXT_MESSAGE_CONTENT_1700000000000
+data: {"type":"TEXT_MESSAGE_CONTENT","timestamp":1700000000000,"messageId":"assistant-1","delta":" plus "}
+
+id: TEXT_MESSAGE_CONTENT_1700000000000
+data: {"type":"TEXT_MESSAGE_CONTENT","timestamp":1700000000000,"messageId":"assistant-1","delta":"plus"}
+
+id: TEXT_MESSAGE_END_1700000000000
+data: {"type":"TEXT_MESSAGE_END","timestamp":1700000000000,"messageId":"assistant-1"}
+
+id: TOOL_CALL_START_1700000000000
+data: {"type":"TOOL_CALL_START","timestamp":1700000000000,"toolCallId":"tool-1","toolCallName":"lookup"}
+
+id: TOOL_CALL_ARGS_1700000000000
+data: {"type":"TOOL_CALL_ARGS","timestamp":1700000000000,"toolCallId":"tool-1","delta":"{\"query\":\"safe\"}"}
+
+id: TOOL_CALL_END_1700000000000
+data: {"type":"TOOL_CALL_END","timestamp":1700000000000,"toolCallId":"tool-1"}
+
+id: TOOL_CALL_RESULT_1700000000000
+data: {"type":"TOOL_CALL_RESULT","timestamp":1700000000000,"messageId":"tool-result-1","toolCallId":"tool-1","content":"safe result","role":"tool"}
+
+id: TOOL_CALL_START_1700000000000
+data: {"type":"TOOL_CALL_START","timestamp":1700000000000,"toolCallId":"tool-2","toolCallName":"lookup"}
+
+id: TOOL_CALL_ARGS_1700000000000
+data: {"type":"TOOL_CALL_ARGS","timestamp":1700000000000,"toolCallId":"tool-2","delta":"{}"}
+
+id: TOOL_CALL_END_1700000000000
+data: {"type":"TOOL_CALL_END","timestamp":1700000000000,"toolCallId":"tool-2"}
+
+id: TOOL_CALL_RESULT_1700000000000
+data: {"type":"TOOL_CALL_RESULT","timestamp":1700000000000,"messageId":"tool-result-2","toolCallId":"tool-2","content":"safe result","role":"tool"}
+
+id: RUN_FINISHED_1700000000000
+data: {"type":"RUN_FINISHED","timestamp":1700000000000,"threadId":"thread-generic","runId":"run-generic","outcome":{"type":"success"}}
+
