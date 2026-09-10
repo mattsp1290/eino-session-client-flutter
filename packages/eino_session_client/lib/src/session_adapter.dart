@@ -54,19 +54,15 @@ final class EinoSessionAdapter {
   int _lifetimeGeneration = 0;
   int _watchGeneration = 0;
   int _controlGeneration = 0;
-  RequestOperation? _watchOperation;
+  SseRequestSession? _watchSession;
   RequestOperation? _controlOperation;
-  StreamSubscription<BaseEvent>? _watchSubscription;
-  Future<void> Function()? _endWatchAttempt;
   Completer<void>? _watchReady;
   EinoWatchSnapshot? _latestSnapshot;
-  String? _activeRunId;
-  int _boundAtWatchGeneration = 0;
-  bool _submissionOpen = false;
+  _SubmissionState _submission = const _IdleSubmission();
   bool _disposed = false;
 
   String? get sessionId => _sessionId;
-  String? get activeRunId => _activeRunId;
+  String? get activeRunId => _submission.runId;
 
   Future<void> connect(String sessionId) async {
     if (_disposed) throw StateError('Adapter is disposed');
@@ -75,8 +71,7 @@ final class EinoSessionAdapter {
       final watchCancellation = _cancelWatch();
       final controlCancellation = _abortControl();
       _sessionId = sessionId;
-      _activeRunId = null;
-      _submissionOpen = false;
+      _submission = const _IdleSubmission();
       _latestSnapshot = null;
       _lifetimeGeneration = controller.beginSession();
       await watchCancellation;
@@ -140,31 +135,22 @@ final class EinoSessionAdapter {
       expectedSessionId: session,
       limits: limits,
     );
-    RequestOperation? operation;
-    StreamSubscription<BaseEvent>? subscription;
-    http.Client? parserHttpClient;
-    SseClient? sseClient;
+    SseRequestSession? watchSession;
     Timer? pairTimer;
     final ended = Completer<bool>();
-    final finished = Completer<void>();
     void failAttempt(bool retryable) {
       if (!ended.isCompleted) ended.complete(retryable);
     }
 
-    Future<void> endWatchAttempt() {
-      failAttempt(false);
-      return finished.future;
-    }
-
-    _endWatchAttempt = endWatchAttempt;
-
     try {
-      operation = transport.open(contract.watchRequest(session));
-      _watchOperation = operation;
-      final response = await Future.any<TransportResponse?>([
-        operation.response.timeout(headerTimeout),
-        ended.future.then<TransportResponse?>((_) => null),
-      ]);
+      watchSession = SseRequestSession.open(
+        transport: transport,
+        request: contract.watchRequest(session),
+        limits: limits,
+        parserClientFactory: _parserClientFactory,
+      );
+      _watchSession = watchSession;
+      final response = await watchSession.responseBefore(headerTimeout);
       if (response == null) return false;
       if (!_watchCurrent(watchGeneration, session)) return false;
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -184,21 +170,10 @@ final class EinoSessionAdapter {
         if (!ready.isCompleted) ready.complete();
         return false;
       }
-      parserHttpClient = _parserClientFactory();
-      sseClient = SseClient(
-        httpClient: parserHttpClient,
-        maxDataCodeUnits: limits.maxSseDataCodeUnits,
-        maxLineCodeUnits: limits.maxSseLineCodeUnits,
-      );
-      final events =
-          EventStreamAdapter(maxDataCodeUnits: limits.maxSseDataCodeUnits)
-              .fromSseStream(
-                sseClient.parseStream(response.body, headers: response.headers),
-                skipInvalidEvents: false,
-              );
       pairTimer = Timer(baselineTimeout, () => failAttempt(true));
-      subscription = events.listen(
-        (event) {
+      watchSession.listen(
+        response,
+        onData: (event) {
           if (!_watchCurrent(watchGeneration, session)) return;
           if (event is MessagesSnapshotEvent) {
             pairTimer?.cancel();
@@ -224,42 +199,28 @@ final class EinoSessionAdapter {
             }
           }
         },
-        onError: (Object _) => failAttempt(true),
+        onError: (_) => failAttempt(true),
         onDone: () => failAttempt(true),
-        cancelOnError: true,
       );
-      _watchSubscription = subscription;
-      final retry = await ended.future;
+      final retry = await Future.any<bool>([
+        ended.future,
+        watchSession.cancelled.then((_) => false),
+      ]);
       return retry;
     } on TimeoutException {
       return true;
     } on Object {
       return true;
     } finally {
-      try {
-        pairTimer?.cancel();
-        projection.discardStagedPair();
-        await subscription?.cancel();
-        if (identical(_endWatchAttempt, endWatchAttempt)) {
-          _endWatchAttempt = null;
-        }
-        if (identical(_watchOperation, operation)) {
-          _watchOperation = null;
-        }
-        if (identical(_watchSubscription, subscription)) {
-          _watchSubscription = null;
-        }
-        await sseClient?.close();
-        parserHttpClient?.close();
-        await operation?.abort();
-      } finally {
-        if (!finished.isCompleted) finished.complete();
-      }
+      pairTimer?.cancel();
+      projection.discardStagedPair();
+      await watchSession?.close();
+      if (identical(_watchSession, watchSession)) _watchSession = null;
     }
   }
 
   AgentViewState _reconcileRun(WatchCommit commit, int watchGeneration) {
-    final active = _activeRunId;
+    final active = _submission.runId;
     if (active == null) {
       return commit.viewState.copyWith(
         runPhase: _terminalOrIdle(controller.state.runPhase),
@@ -270,8 +231,9 @@ final class EinoSessionAdapter {
       if (candidate.id == active) run = candidate;
     }
     if (run == null) {
-      if (_submissionOpen && watchGeneration > _boundAtWatchGeneration) {
-        _submissionOpen = false;
+      final boundAt = _submission.boundAtWatchGeneration;
+      if (_submission.isOpen && boundAt != null && watchGeneration > boundAt) {
+        _submission = const _OutcomeUnknownSubmission();
         return commit.viewState.copyWith(
           runPhase: RunPhase.outcomeUnknown,
           failure: const ViewFailure(ViewFailureKind.outcomeUnavailable),
@@ -286,11 +248,14 @@ final class EinoSessionAdapter {
       EinoRunStatus.failed => RunPhase.failed,
       EinoRunStatus.interrupted => RunPhase.interrupted,
     };
-    if (phase == RunPhase.completed ||
-        phase == RunPhase.failed ||
-        phase == RunPhase.interrupted) {
-      _submissionOpen = false;
-    }
+    _submission = switch (phase) {
+      RunPhase.submitting => _AwaitingWatchSubmission(active, watchGeneration),
+      RunPhase.running => _RunningSubmission(active, watchGeneration),
+      RunPhase.completed ||
+      RunPhase.failed ||
+      RunPhase.interrupted => _FinishedSubmission(active),
+      _ => _submission,
+    };
     return commit.viewState.copyWith(runPhase: phase, failure: null);
   }
 
@@ -304,7 +269,7 @@ final class EinoSessionAdapter {
 
   Future<void> start(String newText) async {
     _ensureConnectedSession();
-    if (_submissionOpen) throw StateError('A submission is already active');
+    if (_submission.isOpen) throw StateError('A submission is already active');
     final bytes = utf8.encode(newText);
     if (newText.trim().isEmpty) throw ArgumentError.value(newText, 'newText');
     if (bytes.length > limits.maxSubmissionBytes) {
@@ -314,40 +279,38 @@ final class EinoSessionAdapter {
       );
       return;
     }
-    final identity = ++_controlGeneration;
-    final session = _sessionId!;
-    final lifetimeGeneration = _lifetimeGeneration;
-    _submissionOpen = true;
-    controller.setRunPhase(RunPhase.submitting, generation: lifetimeGeneration);
+    final control = _beginControl();
+    _submission = _AdmissionPendingSubmission(control);
+    controller.setRunPhase(
+      RunPhase.submitting,
+      generation: control.lifetimeGeneration,
+    );
     RequestOperation? operation;
     try {
-      operation = transport.open(contract.admissionRequest(session, newText));
+      operation = transport.open(
+        contract.admissionRequest(control.session, newText),
+      );
       _controlOperation = operation;
       final response = await operation.response.timeout(headerTimeout);
-      if (!_controlContextCurrent(identity, session, lifetimeGeneration)) {
-        return;
-      }
+      if (!_controlCurrent(control)) return;
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        _submissionOpen = false;
+        _submission = const _IdleSubmission();
         controller.reportFailure(
           _failureForStatus(response.statusCode),
-          generation: lifetimeGeneration,
+          generation: control.lifetimeGeneration,
           runPhase: RunPhase.failed,
         );
         return;
       }
       final body = await _collectBounded(response.body);
-      if (!_controlContextCurrent(identity, session, lifetimeGeneration)) {
-        return;
-      }
+      if (!_controlCurrent(control)) return;
       final admission = contract.decodeAdmission(body);
-      if (admission.sessionId != session || admission.runId.isEmpty) {
+      if (admission.sessionId != control.session || admission.runId.isEmpty) {
         throw const ViewProjectionException(
           ViewFailureKind.incompatibleContract,
         );
       }
-      _activeRunId = admission.runId;
-      _boundAtWatchGeneration = _watchGeneration;
+      _submission = _AwaitingWatchSubmission(admission.runId, _watchGeneration);
       final latest = _latestSnapshot;
       if (latest != null) {
         final current = WatchCommit(
@@ -356,32 +319,32 @@ final class EinoSessionAdapter {
         );
         controller.replaceState(
           _reconcileRun(current, _watchGeneration),
-          generation: lifetimeGeneration,
+          generation: control.lifetimeGeneration,
         );
       }
-      if (_submissionOpen &&
+      if (_submission.isOpen &&
           (latest == null ||
               !latest.runs.any((run) => run.id == admission.runId))) {
         unawaited(reconnect());
       }
     } on ViewProjectionException catch (error) {
-      if (!_controlContextCurrent(identity, session, lifetimeGeneration)) {
-        return;
-      }
-      _submissionOpen = false;
+      if (!_controlCurrent(control)) return;
+      _submission = error.kind == ViewFailureKind.outcomeUnavailable
+          ? const _OutcomeUnknownSubmission()
+          : const _IdleSubmission();
       controller.reportFailure(
         error.kind,
-        generation: lifetimeGeneration,
+        generation: control.lifetimeGeneration,
         runPhase: error.kind == ViewFailureKind.outcomeUnavailable
             ? RunPhase.outcomeUnknown
             : RunPhase.failed,
       );
     } on Object {
-      if (_controlContextCurrent(identity, session, lifetimeGeneration)) {
-        _submissionOpen = false;
+      if (_controlCurrent(control)) {
+        _submission = const _OutcomeUnknownSubmission();
         controller.reportFailure(
           ViewFailureKind.outcomeUnavailable,
-          generation: lifetimeGeneration,
+          generation: control.lifetimeGeneration,
           runPhase: RunPhase.outcomeUnknown,
         );
       }
@@ -393,41 +356,39 @@ final class EinoSessionAdapter {
 
   Future<void> interrupt() async {
     _ensureConnectedSession();
-    final runId = _activeRunId;
-    if (runId == null || !_submissionOpen) {
+    final runId = _submission.runId;
+    if (runId == null || !_submission.isOpen) {
       throw StateError('No active run can be interrupted');
     }
     if (_controlOperation != null) throw StateError('A control action is busy');
-    final identity = ++_controlGeneration;
-    final session = _sessionId!;
-    final lifetimeGeneration = _lifetimeGeneration;
+    final control = _beginControl();
     final previousPhase = controller.state.runPhase;
     controller.setRunPhase(
       RunPhase.interrupting,
-      generation: lifetimeGeneration,
+      generation: control.lifetimeGeneration,
     );
     RequestOperation? operation;
     try {
-      operation = transport.open(contract.interruptRequest(session, runId));
+      operation = transport.open(
+        contract.interruptRequest(control.session, runId),
+      );
       _controlOperation = operation;
       final response = await operation.response.timeout(headerTimeout);
-      if (!_controlContextCurrent(identity, session, lifetimeGeneration)) {
-        return;
-      }
+      if (!_controlCurrent(control)) return;
       if (response.statusCode < 200 || response.statusCode >= 300) {
         controller.reportFailure(
           _failureForStatus(response.statusCode),
-          generation: lifetimeGeneration,
+          generation: control.lifetimeGeneration,
           runPhase: previousPhase,
         );
         return;
       }
       await _collectBounded(response.body);
     } on Object {
-      if (_controlContextCurrent(identity, session, lifetimeGeneration)) {
+      if (_controlCurrent(control)) {
         controller.reportFailure(
           ViewFailureKind.transient,
-          generation: lifetimeGeneration,
+          generation: control.lifetimeGeneration,
           runPhase: previousPhase,
         );
       }
@@ -441,8 +402,7 @@ final class EinoSessionAdapter {
     if (controller.state.runPhase != RunPhase.outcomeUnknown) {
       throw StateError('Only an unknown outcome can be reset');
     }
-    _activeRunId = null;
-    _submissionOpen = false;
+    _submission = const _IdleSubmission();
     controller.setRunPhase(RunPhase.idle, generation: _lifetimeGeneration);
   }
 
@@ -476,17 +436,17 @@ final class EinoSessionAdapter {
   bool _watchCurrent(int generation, String session) =>
       !_disposed && generation == _watchGeneration && session == _sessionId;
 
-  bool _controlCurrent(int identity) =>
-      !_disposed && identity == _controlGeneration;
+  _ControlToken _beginControl() => _ControlToken(
+    identity: ++_controlGeneration,
+    session: _sessionId!,
+    lifetimeGeneration: _lifetimeGeneration,
+  );
 
-  bool _controlContextCurrent(
-    int identity,
-    String session,
-    int lifetimeGeneration,
-  ) =>
-      _controlCurrent(identity) &&
-      session == _sessionId &&
-      lifetimeGeneration == _lifetimeGeneration;
+  bool _controlCurrent(_ControlToken control) =>
+      !_disposed &&
+      control.identity == _controlGeneration &&
+      control.session == _sessionId &&
+      control.lifetimeGeneration == _lifetimeGeneration;
 
   void _ensureConnectedSession() {
     if (_disposed) throw StateError('Adapter is disposed');
@@ -508,15 +468,9 @@ final class EinoSessionAdapter {
     final ready = _watchReady;
     if (ready != null && !ready.isCompleted) ready.complete();
     _watchReady = null;
-    final finished = _endWatchAttempt?.call();
-    _endWatchAttempt = null;
-    final subscription = _watchSubscription;
-    _watchSubscription = null;
-    final operation = _watchOperation;
-    _watchOperation = null;
-    await subscription?.cancel();
-    await operation?.abort();
-    await finished;
+    final watchSession = _watchSession;
+    _watchSession = null;
+    await watchSession?.close();
   }
 
   Future<void> _abortControl() async {
@@ -533,20 +487,78 @@ final class EinoSessionAdapter {
     _watchReady = null;
     _watchGeneration += 1;
     _controlGeneration += 1;
-    final watchFinished = _endWatchAttempt?.call();
-    _endWatchAttempt = null;
-    final watchSubscription = _watchSubscription;
-    final watchOperation = _watchOperation;
+    final watchSession = _watchSession;
     final controlOperation = _controlOperation;
-    _watchSubscription = null;
-    _watchOperation = null;
+    _watchSession = null;
     _controlOperation = null;
-    await watchSubscription?.cancel();
-    await watchOperation?.abort();
-    await watchFinished;
+    await watchSession?.close();
     await controlOperation?.abort();
     _latestSnapshot = null;
+    _submission = const _IdleSubmission();
     _sessionId = null;
     await transport.dispose();
   }
+}
+
+final class _ControlToken {
+  const _ControlToken({
+    required this.identity,
+    required this.session,
+    required this.lifetimeGeneration,
+  });
+
+  final int identity;
+  final String session;
+  final int lifetimeGeneration;
+}
+
+sealed class _SubmissionState {
+  const _SubmissionState();
+
+  String? get runId => null;
+  int? get boundAtWatchGeneration => null;
+  bool get isOpen => false;
+}
+
+final class _IdleSubmission extends _SubmissionState {
+  const _IdleSubmission();
+}
+
+final class _AdmissionPendingSubmission extends _SubmissionState {
+  const _AdmissionPendingSubmission(this.control);
+
+  final _ControlToken control;
+
+  @override
+  bool get isOpen => true;
+}
+
+sealed class _BoundSubmission extends _SubmissionState {
+  const _BoundSubmission(this.runId, this.boundAtWatchGeneration);
+
+  @override
+  final String runId;
+  @override
+  final int boundAtWatchGeneration;
+  @override
+  bool get isOpen => true;
+}
+
+final class _AwaitingWatchSubmission extends _BoundSubmission {
+  const _AwaitingWatchSubmission(super.runId, super.boundAtWatchGeneration);
+}
+
+final class _RunningSubmission extends _BoundSubmission {
+  const _RunningSubmission(super.runId, super.boundAtWatchGeneration);
+}
+
+final class _FinishedSubmission extends _SubmissionState {
+  const _FinishedSubmission(this.runId);
+
+  @override
+  final String runId;
+}
+
+final class _OutcomeUnknownSubmission extends _SubmissionState {
+  const _OutcomeUnknownSubmission();
 }

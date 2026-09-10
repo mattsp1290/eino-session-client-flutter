@@ -15,7 +15,7 @@ dependencies:
   ag_ui_view_state:
     git:
       url: https://github.com/mattsp1290/eino-session-client-flutter.git
-      ref: d51e3a404537b6a2dde09eab9bb792ac3f022e84
+      ref: ae5e3c3eed5058bd900eaab706ef4e960a25ba16
       path: packages/ag_ui_view_state
   http: 1.6.0
 
