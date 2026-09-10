@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GIT_LFS_SKIP_SMUDGE: "1"
+
 jobs:
   linux-full:
     runs-on: ubuntu-24.04

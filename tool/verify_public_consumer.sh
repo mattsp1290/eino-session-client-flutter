@@ -37,6 +37,7 @@ printf '%s\n' \
 (
   cd "$temporary_dir"
   GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    GIT_LFS_SKIP_SMUDGE=1 \
     PUB_CACHE="$temporary_cache" "$dart_bin" pub get
   PUB_CACHE="$temporary_cache" "$dart_bin" analyze
   PUB_CACHE="$temporary_cache" "$dart_bin" pub deps --json > /dev/null

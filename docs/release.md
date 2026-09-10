@@ -51,7 +51,9 @@ tool/verify_public_consumer.sh
 It resolved `ag_ui_view_state 0.1.0` at A, `ag_ui_widgets 0.1.0` and
 `eino_session_client 0.1.0` at B, AG-UI Dart `0.3.0` at the selected SDK
 ref, and `http 1.6.0`. Pub resolution, analysis, and dependency graph
-inspection exited successfully.
+inspection exited successfully. Resolution sets `GIT_LFS_SKIP_SMUDGE=1`
+because the selected AG-UI Dart package has no LFS assets and the monorepo has
+an unrelated dojo fixture whose public LFS endpoint rejects clean CI runners.
 
 The complete local gate passed with Flutter 3.47.1 / Dart 3.13.1 and the Go
 module-selected Go 1.26.3 toolchain: package analysis/tests, Go race tests,

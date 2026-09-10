@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export GIT_LFS_SKIP_SMUDGE=1
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 flutter_bin="$(command -v flutter)"
 dart_bin="$(dirname "$flutter_bin")/dart"
