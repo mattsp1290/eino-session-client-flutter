@@ -6,6 +6,10 @@
 .buildlog/
 .history
 
+# Local agent artifacts
+/.agents/plans/
+/.agents/reviews/
+
 
 
 # Flutter repo-specific
