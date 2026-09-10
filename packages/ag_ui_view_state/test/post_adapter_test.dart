@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:ag_ui/ag_ui.dart';
 import 'package:ag_ui_view_state/ag_ui_view_state.dart';
+import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
 
 void main() {
@@ -80,6 +81,61 @@ void main() {
       );
     },
   );
+
+  for (final cancellation in ['disconnect', 'dispose']) {
+    test(
+      '$cancellation settles an active start and releases parser state',
+      () async {
+        final body = StreamController<List<int>>();
+        final parserClient = _TrackingParserClient();
+        final transport = _FakeTransport(
+          TransportResponse(
+            statusCode: 200,
+            headers: const {'content-type': 'text/event-stream'},
+            body: body.stream,
+          ),
+        );
+        final adapter = AgUiPostAdapter(
+          controller: AgentViewController(),
+          transport: transport,
+          endpoint: Uri.parse('https://example.invalid/run'),
+          parserClientFactory: () => parserClient,
+        );
+
+        final started = adapter.start(const SimpleRunAgentInput());
+        await Future<void>.delayed(Duration.zero);
+        expect(adapter.isBusy, isTrue);
+
+        if (cancellation == 'disconnect') {
+          await adapter.disconnect();
+        } else {
+          await adapter.dispose();
+        }
+        await started.timeout(const Duration(seconds: 1));
+
+        expect(adapter.isBusy, isFalse);
+        expect(parserClient.closed, isTrue);
+        await body.close();
+        if (cancellation == 'disconnect') await adapter.dispose();
+      },
+    );
+  }
+
+  test('synchronous transport failure clears busy and permits retry', () async {
+    final controller = AgentViewController();
+    final adapter = AgUiPostAdapter(
+      controller: controller,
+      transport: _ThrowingTransport(),
+      endpoint: Uri.parse('https://example.invalid/run'),
+    );
+
+    await adapter.start(const SimpleRunAgentInput());
+
+    expect(adapter.isBusy, isFalse);
+    expect(controller.state.failure?.kind, ViewFailureKind.transient);
+    await adapter.start(const SimpleRunAgentInput());
+    expect(adapter.isBusy, isFalse);
+  });
 }
 
 final class _FakeTransport implements RequestTransport {
@@ -108,4 +164,26 @@ final class _FakeOperation implements RequestOperation {
 
   @override
   Future<void> abort() async => abortCount += 1;
+}
+
+final class _ThrowingTransport implements RequestTransport {
+  @override
+  RequestOperation open(RequestSpec request) => throw StateError('open failed');
+
+  @override
+  Future<void> dispose() async {}
+}
+
+final class _TrackingParserClient extends http.BaseClient {
+  bool closed = false;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      throw UnsupportedError('No parser network request expected');
+
+  @override
+  void close() {
+    closed = true;
+    super.close();
+  }
 }

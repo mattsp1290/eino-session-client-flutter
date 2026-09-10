@@ -57,6 +57,7 @@ final class EinoSessionAdapter {
   RequestOperation? _watchOperation;
   RequestOperation? _controlOperation;
   StreamSubscription<BaseEvent>? _watchSubscription;
+  Future<void> Function()? _endWatchAttempt;
   Completer<void>? _watchReady;
   EinoWatchSnapshot? _latestSnapshot;
   String? _activeRunId;
@@ -139,18 +140,32 @@ final class EinoSessionAdapter {
       expectedSessionId: session,
       limits: limits,
     );
-    final operation = transport.open(contract.watchRequest(session));
-    _watchOperation = operation;
+    RequestOperation? operation;
+    StreamSubscription<BaseEvent>? subscription;
     http.Client? parserHttpClient;
     SseClient? sseClient;
     Timer? pairTimer;
     final ended = Completer<bool>();
+    final finished = Completer<void>();
     void failAttempt(bool retryable) {
       if (!ended.isCompleted) ended.complete(retryable);
     }
 
+    Future<void> endWatchAttempt() {
+      failAttempt(false);
+      return finished.future;
+    }
+
+    _endWatchAttempt = endWatchAttempt;
+
     try {
-      final response = await operation.response.timeout(headerTimeout);
+      operation = transport.open(contract.watchRequest(session));
+      _watchOperation = operation;
+      final response = await Future.any<TransportResponse?>([
+        operation.response.timeout(headerTimeout),
+        ended.future.then<TransportResponse?>((_) => null),
+      ]);
+      if (response == null) return false;
       if (!_watchCurrent(watchGeneration, session)) return false;
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final kind = _failureForStatus(response.statusCode);
@@ -182,7 +197,7 @@ final class EinoSessionAdapter {
                 skipInvalidEvents: false,
               );
       pairTimer = Timer(baselineTimeout, () => failAttempt(true));
-      _watchSubscription = events.listen(
+      subscription = events.listen(
         (event) {
           if (!_watchCurrent(watchGeneration, session)) return;
           if (event is MessagesSnapshotEvent) {
@@ -213,6 +228,7 @@ final class EinoSessionAdapter {
         onDone: () => failAttempt(true),
         cancelOnError: true,
       );
+      _watchSubscription = subscription;
       final retry = await ended.future;
       return retry;
     } on TimeoutException {
@@ -220,16 +236,25 @@ final class EinoSessionAdapter {
     } on Object {
       return true;
     } finally {
-      pairTimer?.cancel();
-      projection.discardStagedPair();
-      await _watchSubscription?.cancel();
-      if (identical(_watchOperation, operation)) {
-        _watchSubscription = null;
-        _watchOperation = null;
+      try {
+        pairTimer?.cancel();
+        projection.discardStagedPair();
+        await subscription?.cancel();
+        if (identical(_endWatchAttempt, endWatchAttempt)) {
+          _endWatchAttempt = null;
+        }
+        if (identical(_watchOperation, operation)) {
+          _watchOperation = null;
+        }
+        if (identical(_watchSubscription, subscription)) {
+          _watchSubscription = null;
+        }
+        await sseClient?.close();
+        parserHttpClient?.close();
+        await operation?.abort();
+      } finally {
+        if (!finished.isCompleted) finished.complete();
       }
-      await sseClient?.close();
-      parserHttpClient?.close();
-      await operation.abort();
     }
   }
 
@@ -290,30 +315,33 @@ final class EinoSessionAdapter {
       return;
     }
     final identity = ++_controlGeneration;
+    final session = _sessionId!;
+    final lifetimeGeneration = _lifetimeGeneration;
     _submissionOpen = true;
-    controller.setRunPhase(
-      RunPhase.submitting,
-      generation: _lifetimeGeneration,
-    );
-    final operation = transport.open(
-      contract.admissionRequest(_sessionId!, newText),
-    );
-    _controlOperation = operation;
+    controller.setRunPhase(RunPhase.submitting, generation: lifetimeGeneration);
+    RequestOperation? operation;
     try {
+      operation = transport.open(contract.admissionRequest(session, newText));
+      _controlOperation = operation;
       final response = await operation.response.timeout(headerTimeout);
-      if (!_controlCurrent(identity)) return;
+      if (!_controlContextCurrent(identity, session, lifetimeGeneration)) {
+        return;
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         _submissionOpen = false;
         controller.reportFailure(
           _failureForStatus(response.statusCode),
-          generation: _lifetimeGeneration,
+          generation: lifetimeGeneration,
           runPhase: RunPhase.failed,
         );
         return;
       }
       final body = await _collectBounded(response.body);
+      if (!_controlContextCurrent(identity, session, lifetimeGeneration)) {
+        return;
+      }
       final admission = contract.decodeAdmission(body);
-      if (admission.sessionId != _sessionId || admission.runId.isEmpty) {
+      if (admission.sessionId != session || admission.runId.isEmpty) {
         throw const ViewProjectionException(
           ViewFailureKind.incompatibleContract,
         );
@@ -328,7 +356,7 @@ final class EinoSessionAdapter {
         );
         controller.replaceState(
           _reconcileRun(current, _watchGeneration),
-          generation: _lifetimeGeneration,
+          generation: lifetimeGeneration,
         );
       }
       if (_submissionOpen &&
@@ -337,25 +365,28 @@ final class EinoSessionAdapter {
         unawaited(reconnect());
       }
     } on ViewProjectionException catch (error) {
+      if (!_controlContextCurrent(identity, session, lifetimeGeneration)) {
+        return;
+      }
       _submissionOpen = false;
       controller.reportFailure(
         error.kind,
-        generation: _lifetimeGeneration,
+        generation: lifetimeGeneration,
         runPhase: error.kind == ViewFailureKind.outcomeUnavailable
             ? RunPhase.outcomeUnknown
             : RunPhase.failed,
       );
     } on Object {
-      if (_controlCurrent(identity)) {
+      if (_controlContextCurrent(identity, session, lifetimeGeneration)) {
         _submissionOpen = false;
         controller.reportFailure(
           ViewFailureKind.outcomeUnavailable,
-          generation: _lifetimeGeneration,
+          generation: lifetimeGeneration,
           runPhase: RunPhase.outcomeUnknown,
         );
       }
     } finally {
-      await operation.abort();
+      await operation?.abort();
       if (identical(_controlOperation, operation)) _controlOperation = null;
     }
   }
@@ -368,37 +399,40 @@ final class EinoSessionAdapter {
     }
     if (_controlOperation != null) throw StateError('A control action is busy');
     final identity = ++_controlGeneration;
+    final session = _sessionId!;
+    final lifetimeGeneration = _lifetimeGeneration;
     final previousPhase = controller.state.runPhase;
     controller.setRunPhase(
       RunPhase.interrupting,
-      generation: _lifetimeGeneration,
+      generation: lifetimeGeneration,
     );
-    final operation = transport.open(
-      contract.interruptRequest(_sessionId!, runId),
-    );
-    _controlOperation = operation;
+    RequestOperation? operation;
     try {
+      operation = transport.open(contract.interruptRequest(session, runId));
+      _controlOperation = operation;
       final response = await operation.response.timeout(headerTimeout);
-      if (!_controlCurrent(identity)) return;
+      if (!_controlContextCurrent(identity, session, lifetimeGeneration)) {
+        return;
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         controller.reportFailure(
           _failureForStatus(response.statusCode),
-          generation: _lifetimeGeneration,
+          generation: lifetimeGeneration,
           runPhase: previousPhase,
         );
         return;
       }
       await _collectBounded(response.body);
     } on Object {
-      if (_controlCurrent(identity)) {
+      if (_controlContextCurrent(identity, session, lifetimeGeneration)) {
         controller.reportFailure(
           ViewFailureKind.transient,
-          generation: _lifetimeGeneration,
+          generation: lifetimeGeneration,
           runPhase: previousPhase,
         );
       }
     } finally {
-      await operation.abort();
+      await operation?.abort();
       if (identical(_controlOperation, operation)) _controlOperation = null;
     }
   }
@@ -445,6 +479,15 @@ final class EinoSessionAdapter {
   bool _controlCurrent(int identity) =>
       !_disposed && identity == _controlGeneration;
 
+  bool _controlContextCurrent(
+    int identity,
+    String session,
+    int lifetimeGeneration,
+  ) =>
+      _controlCurrent(identity) &&
+      session == _sessionId &&
+      lifetimeGeneration == _lifetimeGeneration;
+
   void _ensureConnectedSession() {
     if (_disposed) throw StateError('Adapter is disposed');
     if (_sessionId == null) throw StateError('No session is connected');
@@ -465,10 +508,15 @@ final class EinoSessionAdapter {
     final ready = _watchReady;
     if (ready != null && !ready.isCompleted) ready.complete();
     _watchReady = null;
-    await _watchSubscription?.cancel();
+    final finished = _endWatchAttempt?.call();
+    _endWatchAttempt = null;
+    final subscription = _watchSubscription;
     _watchSubscription = null;
-    await _watchOperation?.abort();
+    final operation = _watchOperation;
     _watchOperation = null;
+    await subscription?.cancel();
+    await operation?.abort();
+    await finished;
   }
 
   Future<void> _abortControl() async {
@@ -485,12 +533,18 @@ final class EinoSessionAdapter {
     _watchReady = null;
     _watchGeneration += 1;
     _controlGeneration += 1;
-    await _watchSubscription?.cancel();
-    await _watchOperation?.abort();
-    await _controlOperation?.abort();
+    final watchFinished = _endWatchAttempt?.call();
+    _endWatchAttempt = null;
+    final watchSubscription = _watchSubscription;
+    final watchOperation = _watchOperation;
+    final controlOperation = _controlOperation;
     _watchSubscription = null;
     _watchOperation = null;
     _controlOperation = null;
+    await watchSubscription?.cancel();
+    await watchOperation?.abort();
+    await watchFinished;
+    await controlOperation?.abort();
     _latestSnapshot = null;
     _sessionId = null;
     await transport.dispose();
