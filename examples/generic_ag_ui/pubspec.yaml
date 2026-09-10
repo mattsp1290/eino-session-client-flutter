@@ -36,9 +36,15 @@ dependencies:
       ref: 691ab5e3846ad5957d1b04a9237167f5496c6232
       path: sdks/community/dart
   ag_ui_view_state:
-    path: ../../packages/ag_ui_view_state
+    git:
+      url: https://github.com/mattsp1290/eino-session-client-flutter.git
+      ref: d51e3a404537b6a2dde09eab9bb792ac3f022e84
+      path: packages/ag_ui_view_state
   ag_ui_widgets:
-    path: ../../packages/ag_ui_widgets
+    git:
+      url: https://github.com/mattsp1290/eino-session-client-flutter.git
+      ref: e07e06a89d1a394eb79cea05cbf11f880c685f6d
+      path: packages/ag_ui_widgets
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

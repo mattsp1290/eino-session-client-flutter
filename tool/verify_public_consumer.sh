@@ -5,6 +5,8 @@ set -euo pipefail
 : "${DEPENDENTS_REF:?Set DEPENDENTS_REF to the published dependent-packages commit}"
 
 repo_url="${REPOSITORY_URL:-https://github.com/mattsp1290/eino-session-client-flutter.git}"
+flutter_bin="$(command -v flutter)"
+dart_bin="$(dirname "$flutter_bin")/dart"
 temporary_dir="$(mktemp -d)"
 temporary_cache="$(mktemp -d)"
 trap 'rm -rf "$temporary_dir" "$temporary_cache"' EXIT
@@ -34,8 +36,9 @@ printf '%s\n' \
 
 (
   cd "$temporary_dir"
-  PUB_CACHE="$temporary_cache" dart pub get
-  dart analyze
-  dart pub deps --json > /dev/null
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    PUB_CACHE="$temporary_cache" "$dart_bin" pub get
+  PUB_CACHE="$temporary_cache" "$dart_bin" analyze
+  PUB_CACHE="$temporary_cache" "$dart_bin" pub deps --json > /dev/null
 )
 echo 'PASS: fresh public consumer resolved immutable package refs'

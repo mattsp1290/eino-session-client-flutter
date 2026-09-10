@@ -13,16 +13,20 @@ packages:
   ag_ui_view_state:
     dependency: "direct main"
     description:
-      path: "../../packages/ag_ui_view_state"
-      relative: true
-    source: path
+      path: "packages/ag_ui_view_state"
+      ref: d51e3a404537b6a2dde09eab9bb792ac3f022e84
+      resolved-ref: d51e3a404537b6a2dde09eab9bb792ac3f022e84
+      url: "https://github.com/mattsp1290/eino-session-client-flutter.git"
+    source: git
     version: "0.1.0"
   ag_ui_widgets:
     dependency: "direct main"
     description:
-      path: "../../packages/ag_ui_widgets"
-      relative: true
-    source: path
+      path: "packages/ag_ui_widgets"
+      ref: e07e06a89d1a394eb79cea05cbf11f880c685f6d
+      resolved-ref: e07e06a89d1a394eb79cea05cbf11f880c685f6d
+      url: "https://github.com/mattsp1290/eino-session-client-flutter.git"
+    source: git
     version: "0.1.0"
   async:
     dependency: transitive
@@ -67,9 +71,11 @@ packages:
   eino_session_client:
     dependency: "direct main"
     description:
-      path: "../../packages/eino_session_client"
-      relative: true
-    source: path
+      path: "packages/eino_session_client"
+      ref: e07e06a89d1a394eb79cea05cbf11f880c685f6d
+      resolved-ref: e07e06a89d1a394eb79cea05cbf11f880c685f6d
+      url: "https://github.com/mattsp1290/eino-session-client-flutter.git"
+    source: git
     version: "0.1.0"
   fake_async:
     dependency: transitive
