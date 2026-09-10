@@ -1,0 +1,12 @@
+id: RUN_STARTED_1700000000000
+data: {"type":"RUN_STARTED","timestamp":1700000000000,"threadId":"thread-privacy","runId":"run-privacy"}
+
+id: MESSAGES_SNAPSHOT_1700000000000
+data: {"type":"MESSAGES_SNAPSHOT","timestamp":1700000000000,"messages":[{"id":"assistant-safe","role":"assistant","content":"safe visible output"}]}
+
+id: STATE_SNAPSHOT_1700000000000
+data: {"type":"STATE_SNAPSHOT","timestamp":1700000000000,"snapshot":{"safe":true}}
+
+id: RUN_FINISHED_1700000000000
+data: {"type":"RUN_FINISHED","timestamp":1700000000000,"threadId":"thread-privacy","runId":"run-privacy","outcome":{"type":"success"}}
+

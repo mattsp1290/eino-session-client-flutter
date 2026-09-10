@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  linux-full:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned Flutter
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/flutter.tar.xz"
+          curl -fsSL --retry 3 -o "$archive" https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.1-stable.tar.xz
+          echo 'a1d8166c0309267cb7dc99f1424eecf08b86946ad3b50723c6f59945964aea45  '"$archive" | sha256sum --check
+          tar -C "$RUNNER_TEMP" -xf "$archive"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: 1.26.8
+          cache-dependency-path: conformance/go/go.sum
+      - name: Install matching ChromeDriver
+        shell: bash
+        run: |
+          set -euo pipefail
+          chrome_version="$(google-chrome --product-version)"
+          npx --yes @puppeteer/browsers install "chromedriver@$chrome_version" --path "$RUNNER_TEMP/chromedriver"
+          driver="$(find "$RUNNER_TEMP/chromedriver" -type f -name chromedriver | head -1)"
+          test -n "$driver"
+          echo "$(dirname "$driver")" >> "$GITHUB_PATH"
+      - name: Verify all packages, fixtures, and web builds
+        run: tool/verify.sh
+
+  macos-packages:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned Flutter
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/flutter.zip"
+          curl -fsSL --retry 3 -o "$archive" https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_3.47.1-stable.zip
+          echo '21e06435c50be9a43ffea8abb549bd7640cd38197e7741dd780f0680afbb64ba  '"$archive" | shasum -a 256 --check
+          ditto -x -k "$archive" "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Analyze and test packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          dart --version
+          flutter --version
+          for package in ag_ui_view_state eino_session_client; do
+            (cd "packages/$package" && dart pub get && dart analyze && dart test)
+          done
+          for project in packages/ag_ui_widgets examples/generic_ag_ui examples/eino_session; do
+            (cd "$project" && flutter pub get && flutter analyze && flutter test)
+          done
+          dart run tool/check_boundaries.dart

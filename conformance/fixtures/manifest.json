@@ -1,0 +1,14 @@
+{
+  "ag_ui_go": "v0.0.0-20260624151131-d2049debabd9",
+  "eino_agent": "v0.3.4-0.20260908141855-99a87b8cb1ac",
+  "eino_agui": "v0.1.1",
+  "framing": "SSE emitted by the pinned Go SDK; generated timestamp fields are normalized to 1700000000000 after capture",
+  "generator": "go-ag-ui-sse",
+  "seed": 20260910,
+  "sha256": {
+    "eino-resync.sse": "4c08163e0b1294c19913f85a6fd8159b662eab1d72d342242ad5e65d5fdfd215",
+    "eino-watch.sse": "be1527496308dd074c7306071c74b77de88a40d93ad2e923889d8c0e74d2bec5",
+    "generic.sse": "6008c2207c68ee3f750a5e9db67b548f2ea03335148d4eb724b6ff1938796dc3",
+    "privacy.sse": "ee7c141ba29d8cc49cd86c5e64d7e812ecb58ba25ea73faf38f93d5934638371"
+  }
+}
